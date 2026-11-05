@@ -1,0 +1,15 @@
+{
+    "dataset": "customer_churn.csv",
+    "total_records": 2500,
+    "total_columns": 11,
+    "missing_values": 0,
+    "duplicate_rows": 0,
+    "negative_numeric_values": 0,
+    "invalid_target_values": 0,
+    "missing_value_score": 100.0,
+    "duplicate_score": 100.0,
+    "numeric_validity_score": 100.0,
+    "target_validity_score": 100.0,
+    "overall_quality_score": 100.0,
+    "status": "REVIEW REQUIRED"
+}

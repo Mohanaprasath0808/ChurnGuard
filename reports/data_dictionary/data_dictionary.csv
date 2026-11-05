@@ -1,0 +1,12 @@
+column_name,description,data_type,allowed_values,purpose,actual_dataset_dtype,missing_values,unique_values
+customer_id,Unique identifier assigned to each customer.,String,Unique customer ID,Customer identification; exclude from model training.,str,0,2500
+tenure_months,Number of months the customer has stayed with the company.,Integer,Non-negative integer,Customer relationship duration.,int64,0,72
+monthly_charges,Amount charged to the customer per month.,Numeric,Non-negative number,Customer billing analysis.,float64,0,2310
+support_tickets_90d,Number of support tickets recorded during the 90-day period.,Integer,Non-negative integer,Customer support activity.,int64,0,9
+avg_monthly_usage_hours,Average hours of service usage per month.,Numeric,Non-negative number,Customer usage behaviour.,float64,0,716
+late_payments_90d,Number of late payments recorded during the 90-day period.,Integer,Non-negative integer,Payment behaviour analysis.,int64,0,6
+contract_type,Type of contract selected by the customer.,Categorical,"Monthly, Annual, Two-year",Contract-based churn analysis.,str,0,3
+autopay_enabled,Indicates whether automatic payment is enabled.,Boolean,True/False or 1/0,Payment preference analysis.,str,0,2
+satisfaction_score,Customer satisfaction rating.,Numeric,Verify actual rating scale from dataset documentation.,Customer satisfaction analysis.,int64,0,5
+discount_currently_active,Indicates whether a discount is currently active.,Boolean,True/False or 1/0,Discount and retention analysis.,str,0,2
+churned_90d,Target indicating whether the customer churned within the defined 90-day period.,Binary Integer,"0 = Not churned, 1 = Churned",Machine learning prediction target.,int64,0,2

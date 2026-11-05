@@ -1,0 +1,13 @@
+validation_check,status,details
+Missing values,PASS,Total missing values: 0
+Duplicate rows,PASS,Duplicate rows: 0
+Customer ID uniqueness,PASS,Duplicate customer IDs: 0
+tenure_months non-negative,PASS,Negative values: 0
+monthly_charges non-negative,PASS,Negative values: 0
+support_tickets_90d non-negative,PASS,Negative values: 0
+avg_monthly_usage_hours non-negative,PASS,Negative values: 0
+late_payments_90d non-negative,PASS,Negative values: 0
+Target values,PASS,Invalid target values: 0
+Contract type,PASS,Invalid contract values: 0
+autopay_enabled binary values,FAIL,Invalid values: 2500
+discount_currently_active binary values,FAIL,Invalid values: 2500

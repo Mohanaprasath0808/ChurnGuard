@@ -1,0 +1,9 @@
+Check,Status,Details
+Target missing values,PASS,No missing target values found.
+Target values,PASS,Target contains only binary values 0 and 1.
+Duplicate rows,PASS,Duplicate rows: 0
+Duplicate customer IDs,PASS,Duplicate IDs: 0
+Suspicious feature names,PASS,No suspicious feature names found.
+Feature timing verification,PENDING,feature_timestamp is unavailable. Historical feature timing cannot be verified from this sample dataset.
+High target correlation,PASS,No numeric feature has absolute correlation >= 0.95 with the target.
+Customer ID feature usage,MANUAL REVIEW REQUIRED,Ensure customer_id is excluded from model training features.

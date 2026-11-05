@@ -1,4 +1,15 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
+.env
+.vscode/
 .pytest_cache/
+mlruns/
+.DS_Store
+
+# Raw and private customer data
+data/customer_churn.csv
+
+# Temporary files
+*.log

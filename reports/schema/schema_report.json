@@ -1,0 +1,47 @@
+{
+    "dataset_name": "customer_churn.csv",
+    "total_rows": 2500,
+    "total_columns": 11,
+    "expected_columns": [
+        "customer_id",
+        "tenure_months",
+        "monthly_charges",
+        "support_tickets_90d",
+        "avg_monthly_usage_hours",
+        "late_payments_90d",
+        "contract_type",
+        "autopay_enabled",
+        "satisfaction_score",
+        "discount_currently_active",
+        "churned_90d"
+    ],
+    "actual_columns": [
+        "customer_id",
+        "tenure_months",
+        "monthly_charges",
+        "support_tickets_90d",
+        "avg_monthly_usage_hours",
+        "late_payments_90d",
+        "contract_type",
+        "autopay_enabled",
+        "satisfaction_score",
+        "discount_currently_active",
+        "churned_90d"
+    ],
+    "missing_columns": [],
+    "unexpected_columns": [],
+    "column_data_types": {
+        "customer_id": "str",
+        "tenure_months": "int64",
+        "monthly_charges": "float64",
+        "support_tickets_90d": "int64",
+        "avg_monthly_usage_hours": "float64",
+        "late_payments_90d": "int64",
+        "contract_type": "str",
+        "autopay_enabled": "str",
+        "satisfaction_score": "int64",
+        "discount_currently_active": "str",
+        "churned_90d": "int64"
+    },
+    "schema_status": "PASS"
+}
