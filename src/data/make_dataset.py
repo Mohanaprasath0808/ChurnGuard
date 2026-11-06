@@ -1,214 +1,166 @@
+"""Data Preparation and Reproducible Splitting Pipeline for ChurnGuard.
+
+Handles:
+1. Loading raw dataset updated customerchurn.csv
+2. Schema & data quality verification
+3. Timestamp format verification (format: DD-MM-YYYY HH:MM)
+4. Duplicate records check
+5. Reproducible Stratified train/val/test splitting (70% / 15% / 15%, seed=42)
+6. Zero customer overlap verification
+7. Saving clean datasets to data/processed/ (train.csv, validation.csv, test.csv)
+"""
 
 from pathlib import Path
+from typing import Tuple
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-# ==========================================
-# 1. PROJECT PATH CONFIGURATION
-# ==========================================
 
-ROOT = Path(__file__).resolve().parents[2]
+def get_project_root() -> Path:
+    """Resolves the ChurnGuard project root directory."""
+    current = Path(__file__).resolve().parent
+    # If in ChurnGuard/src/data
+    if current.name == "data" and current.parent.name == "src":
+        return current.parent.parent
+    if (current / "ChurnGuard").exists():
+        return current / "ChurnGuard"
+    return current
 
-DATA_PATH = ROOT / "data" / "customer_churn.csv"
-OUTPUT_DIR = ROOT / "data" / "processed"
 
-TARGET_COLUMN = "churned_90d"
+def run_make_dataset() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    root = get_project_root()
+    data_path = root / "data" / "updated customerchurn.csv"
+    if not data_path.exists():
+        data_path = root / "data" / "raw" / "updated customerchurn.csv"
 
-RANDOM_STATE = 42
+    output_dir = root / "data" / "processed"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-# ==========================================
-# 2. CHECK DATASET FILE
-# ==========================================
+    target_col = "churned_90d"
+    id_col = "customer_id"
+    timestamp_col = "feature_timestamp"
+    random_state = 42
 
-print("\n========== CHURNGUARD DATA PIPELINE ==========\n")
+    print("\n" + "=" * 60)
+    print(" CHURNGUARD: REPRODUCIBLE DATASET PREPARATION PIPELINE")
+    print("=" * 60)
+    print(f"Loading raw dataset from: {data_path}")
 
-if not DATA_PATH.exists():
-    raise FileNotFoundError(
-        f"Dataset not found: {DATA_PATH}\n"
-        "Place customer_churn.csv inside the data folder."
+    if not data_path.exists():
+        raise FileNotFoundError(f"Dataset not found at: {data_path}")
+
+    df = pd.read_csv(data_path)
+    total_records = len(df)
+    print(f"Raw records loaded: {total_records}, Columns: {len(df.columns)}")
+
+    # ==========================================
+    # 1. TIMESTAMP PARSING & VALIDATION
+    # ==========================================
+    # Strictly parse using DD-MM-YYYY HH:MM format
+    parsed_timestamps = pd.to_datetime(
+        df[timestamp_col].astype(str).str.strip(),
+        format="%d-%m-%Y %H:%M",
+        errors="coerce"
+    )
+    invalid_ts = int(parsed_timestamps.isna().sum())
+    print(f"Feature timestamps parsed: {total_records - invalid_ts} valid, {invalid_ts} invalid")
+
+    if invalid_ts > 0:
+        raise ValueError(f"Detected {invalid_ts} invalid timestamps in {timestamp_col}!")
+
+    timestamp_report = pd.DataFrame({
+        "metric": [
+            "Total timestamp records",
+            "Invalid timestamps",
+            "Earliest feature timestamp",
+            "Latest feature timestamp"
+        ],
+        "value": [
+            total_records,
+            invalid_ts,
+            str(parsed_timestamps.min()),
+            str(parsed_timestamps.max())
+        ]
+    })
+    timestamp_report.to_csv(output_dir / "timestamp_validation_report.csv", index=False)
+    print("Timestamp validation report saved.")
+
+    # ==========================================
+    # 2. DUPLICATES & TARGET INTEGRITY
+    # ==========================================
+    dupes = int(df.duplicated().sum())
+    print(f"Duplicate rows detected: {dupes}")
+    if dupes > 0:
+        df = df.drop_duplicates().reset_index(drop=True)
+        print("Duplicate rows removed.")
+
+    target_vals = set(df[target_col].unique())
+    if target_vals != {0, 1}:
+        raise ValueError(f"Target column must contain classes {{0, 1}}, got: {target_vals}")
+
+    # ==========================================
+    # 3. REPRODUCIBLE STRATIFIED SPLITTING
+    # ==========================================
+    # 70% Train, 15% Validation, 15% Test
+    print("Splitting dataset: 70% Train, 15% Validation, 15% Test (seed=42)...")
+    train_df, temp_df = train_test_split(
+        df,
+        test_size=0.30,
+        random_state=random_state,
+        stratify=df[target_col]
     )
 
-print("Dataset found successfully!")
-
-# ==========================================
-# 3. LOAD DATASET
-# ==========================================
-
-df = pd.read_csv(DATA_PATH)
-
-print("\nDataset loaded successfully!")
-print("Original dataset shape:", df.shape)
-
-# ==========================================
-# 4. SCHEMA VALIDATION
-# ==========================================
-
-required_columns = [
-    "customer_id",
-    "tenure_months",
-    "monthly_charges",
-    "support_tickets_90d",
-    "avg_monthly_usage_hours",
-    "late_payments_90d",
-    "contract_type",
-    "autopay_enabled",
-    "satisfaction_score",
-    "discount_currently_active",
-    "churned_90d"
-]
-
-missing_columns = [
-
-    col for col in required_columns
-    if col not in df.columns
-]
-
-if missing_columns:
-    raise ValueError(
-        f"Missing required columns: {missing_columns}"
+    val_df, test_df = train_test_split(
+        temp_df,
+        test_size=0.50,
+        random_state=random_state,
+        stratify=temp_df[target_col]
     )
 
-print("\nSchema validation: PASSED")
+    # ==========================================
+    # 4. CUSTOMER OVERLAP VERIFICATION
+    # ==========================================
+    train_ids = set(train_df[id_col])
+    val_ids = set(val_df[id_col])
+    test_ids = set(test_df[id_col])
 
-# ==========================================
-# 5. DATA QUALITY CHECKS
-# ==========================================
+    overlap_tv = len(train_ids & val_ids)
+    overlap_tt = len(train_ids & test_ids)
+    overlap_vt = len(val_ids & test_ids)
 
-if df.empty:
-    raise ValueError("Dataset is empty.")
+    if (overlap_tv + overlap_tt + overlap_vt) > 0:
+        raise RuntimeError(
+            f"Customer leakage detected! Overlaps: Train/Val={overlap_tv}, "
+            f"Train/Test={overlap_tt}, Val/Test={overlap_vt}"
+        )
 
-if df.columns.duplicated().any():
-    raise ValueError("Duplicate column names detected.")
+    print("Zero customer overlap verified: PASSED (Train, Val, Test partitions are mutually exclusive)")
 
-if df[TARGET_COLUMN].isna().any():
-    raise ValueError("Target column contains missing values.")
+    # ==========================================
+    # 5. SAVE PARTITIONS
+    # ==========================================
+    train_path = output_dir / "train.csv"
+    val_path = output_dir / "validation.csv"
+    test_path = output_dir / "test.csv"
 
-# Check customer ID
-if df["customer_id"].isna().any():
-    raise ValueError("Customer ID contains missing values.")
+    train_df.to_csv(train_path, index=False)
+    val_df.to_csv(val_path, index=False)
+    test_df.to_csv(test_path, index=False)
 
-if df["customer_id"].duplicated().any():
-    raise ValueError("Duplicate customer IDs detected.")
+    print(f"\nSaved processed partitions:")
+    print(f" - Train:      {len(train_df):,} records ({len(train_df)/total_records*100:.1f}%) -> {train_path.name}")
+    print(f" - Validation: {len(val_df):,} records ({len(val_df)/total_records*100:.1f}%) -> {val_path.name}")
+    print(f" - Test:       {len(test_df):,} records ({len(test_df)/total_records*100:.1f}%) -> {test_path.name}")
 
-# Check target values
-target_values = set(df[TARGET_COLUMN].unique())
+    print("\nTarget Churn Distribution:")
+    print(f" - Overall:    {df[target_col].mean()*100:.2f}%")
+    print(f" - Train:      {train_df[target_col].mean()*100:.2f}%")
+    print(f" - Validation: {val_df[target_col].mean()*100:.2f}%")
+    print(f" - Test:       {test_df[target_col].mean()*100:.2f}%")
 
-if target_values != {0, 1}:
-    raise ValueError(
-        f"Expected churn target values 0 and 1, found: {target_values}"
-    )
+    print("\nCHURNGUARD DATASET PREPARATION COMPLETED SUCCESSFULLY!\n")
+    return train_df, val_df, test_df
 
-print("\nData quality checks: PASSED")
 
-# ==========================================
-# 6. DUPLICATE RECORD CHECK
-# ==========================================
-
-duplicate_count = df.duplicated().sum()
-
-print("\nDuplicate records:", duplicate_count)
-
-if duplicate_count > 0:
-    df = df.drop_duplicates().reset_index(drop=True)
-    print("Duplicate records removed.")
-
-# ==========================================
-# 7. MISSING VALUE REPORT
-# ==========================================
-
-missing_report = df.isnull().sum()
-
-print("\nMissing values report:")
-print(missing_report)
-
-# Save missing value report
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-missing_report.to_csv(
-    OUTPUT_DIR / "missing_values_report.csv",
-    header=["missing_count"]
-)
-
-# ==========================================
-# 8. TARGET DISTRIBUTION
-# ==========================================
-
-print("\nChurn target distribution:")
-print(df[TARGET_COLUMN].value_counts())
-
-if df[TARGET_COLUMN].nunique() != 2:
-    raise ValueError("Both churn classes must be present.")
-
-# ==========================================
-# 9. TRAIN / VALIDATION / TEST SPLIT
-# ==========================================
-
-print("\nStarting dataset splitting...")
-
-# 70% Training, 30% Temporary
-train_df, temp_df = train_test_split(
-    df,
-    test_size=0.30,
-    random_state=RANDOM_STATE,
-    stratify=df[TARGET_COLUMN]
-)
-
-# Split remaining 30% into 15% Validation and 15% Test
-val_df, test_df = train_test_split(
-    temp_df,
-    test_size=0.50,
-    random_state=RANDOM_STATE,
-    stratify=temp_df[TARGET_COLUMN]
-)
-
-# ==========================================
-# 10. SAVE PROCESSED DATASETS
-# ==========================================
-
-train_df.to_csv(
-    OUTPUT_DIR / "train.csv",
-    index=False
-)
-
-val_df.to_csv(
-    OUTPUT_DIR / "validation.csv",
-    index=False
-)
-
-test_df.to_csv(
-    OUTPUT_DIR / "test.csv",
-    index=False
-)
-
-# ==========================================
-# 11. FINAL DATASET SUMMARY
-# ==========================================
-
-print("\n========== SPLITTING COMPLETED ==========\n")
-
-print("Original records:", len(df))
-print("Training records:", len(train_df))
-print("Validation records:", len(val_df))
-print("Testing records:", len(test_df))
-
-print("\nDataset percentages:")
-
-print("Training: {:.2f}%".format(
-    len(train_df) / len(df) * 100
-))
-
-print("Validation: {:.2f}%".format(
-    len(val_df) / len(df) * 100
-))
-
-print("Testing: {:.2f}%".format(
-    len(test_df) / len(df) * 100
-))
-
-print("\nSaved files:")
-print(OUTPUT_DIR / "train.csv")
-print(OUTPUT_DIR / "validation.csv")
-print(OUTPUT_DIR / "test.csv")
-print(OUTPUT_DIR / "missing_values_report.csv")
-
-print("\nCHURNGUARD DATA PIPELINE SUCCESSFULLY COMPLETED!")
+if __name__ == "__main__":
+    run_make_dataset()

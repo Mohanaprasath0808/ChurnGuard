@@ -1,15 +1,24 @@
-.venv/
+﻿.venv/
 venv/
 __pycache__/
-*.pyc
-.env
-.vscode/
+*.py[cod]
 .pytest_cache/
+.coverage
+htmlcov/
 mlruns/
+mlartifacts/
+artifacts/
+.env
+.env.*
+.vscode/
+.idea/
 .DS_Store
-
-# Raw and private customer data
+Thumbs.db
 data/customer_churn.csv
-
-# Temporary files
+data/raw/
+data/processed/*.csv
+data/processed/*.parquet
 *.log
+*.tmp
+
+reports/**/*.csv
