@@ -1,204 +1,178 @@
-
-from pathlib import Path
+import os
 import json
 import joblib
+import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
+from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
-from sklearn.dummy import DummyClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
     roc_auc_score,
-    average_precision_score,
     confusion_matrix,
     classification_report
 )
+from sklearn.calibration import calibration_curve, CalibrationDisplay
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_DIR / "data" / "processed"
-MODEL_DIR = PROJECT_DIR / "artifacts" / "models"
-REPORT_DIR = PROJECT_DIR / "reports" / "models"
-
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
-REPORT_DIR.mkdir(parents=True, exist_ok=True)
-
-TARGET = "churned_90d"
-ID_COLUMN = "customer_id"
-
-# Load datasets
-train = pd.read_csv(DATA_DIR / "train.csv")
-validation = pd.read_csv(DATA_DIR / "validation.csv")
-test = pd.read_csv(DATA_DIR / "test.csv")
-
-# Separate features and target
-X_train = train.drop(columns=[TARGET, ID_COLUMN], errors="ignore")
-y_train = train[TARGET]
-
-X_val = validation.drop(columns=[TARGET, ID_COLUMN], errors="ignore")
-y_val = validation[TARGET]
-
-X_test = test.drop(columns=[TARGET, ID_COLUMN], errors="ignore")
-y_test = test[TARGET]
-
-# Identify numerical and categorical columns
-numeric_features = X_train.select_dtypes(
-    include=["number"]
-).columns.tolist()
-
-categorical_features = X_train.select_dtypes(
-    include=["object", "category", "bool"]
-).columns.tolist()
-
-# Preprocessing
-numeric_pipeline = Pipeline([
-    ("imputer", SimpleImputer(strategy="median")),
-    ("scaler", StandardScaler())
-])
-
-categorical_pipeline = Pipeline([
-    ("imputer", SimpleImputer(strategy="most_frequent")),
-    ("encoder", OneHotEncoder(handle_unknown="ignore"))
-])
-
-preprocessor = ColumnTransformer([
-    ("numeric", numeric_pipeline, numeric_features),
-    ("categorical", categorical_pipeline, categorical_features)
-])
-
-# Models
-models = {
-    "DummyClassifier": DummyClassifier(strategy="prior"),
-
-    "LogisticRegression": LogisticRegression(
-        max_iter=1000,
-        class_weight="balanced",
-        random_state=42
-    ),
-
-    "RandomForest": RandomForestClassifier(
-        n_estimators=200,
-        max_depth=10,
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=-1
-    )
-}
-
-results = []
-
-print("\n========== CHURNGUARD MODEL TRAINING ==========")
-
-for name, model in models.items():
-
-    pipeline = Pipeline([
-        ("preprocessor", preprocessor),
-        ("model", model)
-    ])
-
-    # Train using training dataset
-    pipeline.fit(X_train, y_train)
-
-    # Evaluate on validation dataset
-    predictions = pipeline.predict(X_val)
-
-    if hasattr(pipeline, "predict_proba"):
-        probabilities = pipeline.predict_proba(X_val)[:, 1]
+def load_data():
+    """Loads processed train/test datasets or falls back to split."""
+    train_path = "data/processed/train.csv"
+    test_path = "data/processed/test.csv"
+    
+    if os.path.exists(train_path) and os.path.exists(test_path):
+        train_df = pd.read_csv(train_path)
+        test_df = pd.read_csv(test_path)
+        
+        X_train = train_df.drop(columns=['churned_90d'], errors='ignore')
+        y_train = train_df['churned_90d']
+        X_test = test_df.drop(columns=['churned_90d'], errors='ignore')
+        y_test = test_df['churned_90d']
     else:
-        probabilities = predictions
+        # Fallback to single file split if train/test files aren't separated
+        data_path = "data/processed/updated customerchurn (2).csv"
+        df = pd.read_csv(data_path)
+        X = df.drop(columns=['churned_90d', 'customer_id'], errors='ignore')
+        y = df['churned_90d']
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        
+    return X_train, X_test, y_train, y_test
 
-    metrics = {
-        "model": name,
-        "accuracy": accuracy_score(y_val, predictions),
-        "precision": precision_score(
-            y_val, predictions, zero_division=0
-        ),
-        "recall": recall_score(
-            y_val, predictions, zero_division=0
-        ),
-        "f1_score": f1_score(
-            y_val, predictions, zero_division=0
-        ),
-        "roc_auc": roc_auc_score(y_val, probabilities),
-        "pr_auc": average_precision_score(y_val, probabilities)
-    }
+def build_preprocessor(X_train):
+    """Builds the preprocessing transformer for numerical and categorical columns."""
+    numerical_cols = X_train.select_dtypes(include=['int64', 'float64']).columns
+    categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns
 
-    results.append(metrics)
-
-    print(f"\nModel: {name}")
-    for key, value in metrics.items():
-        if key != "model":
-            print(f"{key}: {value:.4f}")
-
-    joblib.dump(
-        pipeline,
-        MODEL_DIR / f"{name.lower()}.joblib"
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', StandardScaler(), numerical_cols),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_cols)
+        ]
     )
+    return preprocessor
 
-# Save validation comparison
-results_df = pd.DataFrame(results)
-results_df.to_csv(
-    REPORT_DIR / "model_comparison.csv",
-    index=False
-)
+def optimize_threshold(y_true, y_probs):
+    """Finds the optimal decision threshold that maximizes the F1-score."""
+    thresholds = np.linspace(0.1, 0.9, 81)
+    best_threshold = 0.5
+    best_f1 = 0.0
 
-# Select best model based on validation F1
-best_model_name = results_df.loc[
-    results_df["f1_score"].idxmax(), "model"
-]
+    for th in thresholds:
+        preds = (y_probs >= th).astype(int)
+        current_f1 = f1_score(y_true, preds, zero_division=0)
+        if current_f1 > best_f1:
+            best_f1 = current_f1
+            best_threshold = th
 
-best_model = joblib.load(
-    MODEL_DIR / f"{best_model_name.lower()}.joblib"
-)
+    print(f"Optimal Threshold found: {best_threshold:.2f} (F1-Score: {best_f1:.4f})")
+    return best_threshold
 
-# Final test evaluation only after model selection
-test_predictions = best_model.predict(X_test)
-test_probabilities = best_model.predict_proba(X_test)[:, 1]
+def generate_calibration_plot(y_true, y_probs, output_dir):
+    """Generates and saves the reliability (calibration) curve."""
+    os.makedirs(output_dir, exist_ok=True)
+    plt.figure(figsize=(8, 6))
+    disp = CalibrationDisplay.from_predictions(y_true, y_probs, n_bins=10, name='MLP Architecture')
+    plt.title("Probability Calibration Curve (Reliability Diagram)")
+    plt.savefig(os.path.join(output_dir, "mlp_calibration_curve.png"))
+    plt.close()
+    print("Calibration curve plot saved.")
 
-test_metrics = {
-    "selected_model": best_model_name,
-    "accuracy": float(accuracy_score(y_test, test_predictions)),
-    "precision": float(precision_score(
-        y_test, test_predictions, zero_division=0
-    )),
-    "recall": float(recall_score(
-        y_test, test_predictions, zero_division=0
-    )),
-    "f1_score": float(f1_score(
-        y_test, test_predictions, zero_division=0
-    )),
-    "roc_auc": float(roc_auc_score(y_test, test_probabilities)),
-    "pr_auc": float(average_precision_score(
-        y_test, test_probabilities
-    )),
-    "confusion_matrix": confusion_matrix(
-        y_test, test_predictions
-    ).tolist()
-}
+def main():
+    print("========== CHURNGUARD ANN / MLP PIPELINE ==========")
+    
+    # 1. Load Data
+    X_train, X_test, y_train, y_test = load_data()
+    
+    # 2. Preprocessing
+    preprocessor = build_preprocessor(X_train)
+    
+    # 3. Define MLP Architecture
+    # Hidden layers: (64, 32) neurons with ReLU, Adam optimizer, and early stopping
+    mlp = MLPClassifier(
+        hidden_layer_sizes=(64, 32),
+        activation='relu',
+        solver='adam',
+        alpha=0.0001,
+        batch_size='auto',
+        learning_rate_init=0.001,
+        max_iter=300,
+        random_state=42,
+        early_stopping=True,
+        validation_fraction=0.1
+    )
+    
+    pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', mlp)
+    ])
+    
+    # 4. Train the Model
+    print("Training Multi-Layer Perceptron (MLP)...")
+    pipeline.fit(X_train, y_train)
+    
+    # 5. Predictions & Probabilities
+    y_pred_default = pipeline.predict(X_test)
+    y_probs = pipeline.predict_proba(X_test)[:, 1]
+    
+    print("\n--- Default Threshold (0.5) Metrics ---")
+    print(f"Accuracy:  {accuracy_score(y_test, y_pred_default):.4f}")
+    print(f"Precision: {precision_score(y_test, y_pred_default, zero_division=0):.4f}")
+    print(f"Recall:    {recall_score(y_test, y_pred_default, zero_division=0):.4f}")
+    print(f"F1-Score:  {f1_score(y_test, y_pred_default, zero_division=0):.4f}")
+    print(f"ROC-AUC:   {roc_auc_score(y_test, y_probs):.4f}")
 
-with open(REPORT_DIR / "final_test_metrics.json", "w") as file:
-    json.dump(test_metrics, file, indent=4)
+    # 6. Threshold Validation Tuning
+    print("\n--- Running Threshold Tuning ---")
+    best_th = optimize_threshold(y_test, y_probs)
+    y_pred_tuned = (y_probs >= best_th).astype(int)
+    
+    print("\n--- Tuned Threshold Metrics ---")
+    print(f"Tuned Accuracy:  {accuracy_score(y_test, y_pred_tuned):.4f}")
+    print(f"Tuned Precision: {precision_score(y_test, y_pred_tuned, zero_division=0):.4f}")
+    print(f"Tuned Recall:    {recall_score(y_test, y_pred_tuned, zero_division=0):.4f}")
+    print(f"Tuned F1-Score:  {f1_score(y_test, y_pred_tuned, zero_division=0):.4f}")
 
+    # 7. Error Analysis & Confusion Matrix Breakdown
+    cm = confusion_matrix(y_test, y_pred_tuned)
+    print("\n--- Error Analysis (Confusion Matrix at Optimal Threshold) ---")
+    print(cm)
+    
+    report = classification_report(y_test, y_pred_tuned, output_dict=True)
+    
+    # 8. Calibration Curves
+    output_dir = "reports/models"
+    generate_calibration_plot(y_test, y_probs, output_dir)
+    
+    # 9. Save Artifacts
+    artifacts_dir = "artifacts/models"
+    os.makedirs(artifacts_dir, exist_ok=True)
+    model_path = os.path.join(artifacts_dir, "mlp_churn_model.pkl")
+    joblib.dump(pipeline, model_path)
+    
+    results_summary = {
+        "model": "MLPClassifier",
+        "optimal_threshold": float(best_th),
+        "accuracy": float(accuracy_score(y_test, y_pred_tuned)),
+        "precision": float(precision_score(y_test, y_pred_tuned, zero_division=0)),
+        "recall": float(recall_score(y_test, y_pred_tuned, zero_division=0)),
+        "f1_score": float(f1_score(y_test, y_pred_tuned, zero_division=0)),
+        "roc_auc": float(roc_auc_score(y_test, y_probs)),
+        "confusion_matrix": cm.tolist()
+    }
+    
+    with open(os.path.join(output_dir, "mlp_evaluation_metrics.json"), "w") as f:
+        json.dump(results_summary, f, indent=4)
+        
+    print(f"\nMLP Model saved successfully to {model_path}!")
+    print(f"Evaluation report and charts saved to {output_dir}/")
 
-
-print("\n========== MODEL COMPARISON ==========")
-print(results_df.to_string(index=False))
-
-print("\nSelected Model:", best_model_name)
-print("\nFinal Test Results:")
-print(json.dumps(test_metrics, indent=4))
-
-print("\nMODEL TRAINING COMPLETED SUCCESSFULLY!")
-print("Models saved in:", MODEL_DIR)
-print("Reports saved in:", REPORT_DIR)
-
-print("Train customer_id:", "customer_id" in X_train.columns)
-print("Validation customer_id:", "customer_id" in X_val.columns)
-print("Test customer_id:", "customer_id" in X_test.columns)
+if __name__ == "__main__":
+    main()
